@@ -1,0 +1,315 @@
+# # # rules.yaml
+
+
+# rules:
+#   - id: XSS-001
+#     description: "Potential Cross-site Scripting"
+#     severity: "high"
+#     sources: 
+#       # Sources of untrusted data
+#       - "request.args.get"
+#       - "request.form.get"
+#       - "request.values.get"
+#       - "request.json.get"
+#       - "request.cookies.get"
+#       - "request.headers.get"
+#       - "request.args"
+#       - "request.form"
+#       - "request.values"
+#       - "request.json"
+#       - "request.cookies"
+#       - "request.headers"
+#       - "request.get_data"
+#       - "raw_input"
+#       - "input"
+#       - "os.environ.get"
+
+#     sinks: 
+#       # Common XSS sinks where untrusted data is rendered in HTML
+#       - "render_template"
+#       - "render_template_string"
+#       - "Response"
+#       - "HTML"
+#       - "self.response.write"
+#       - "print"
+#       - "return"
+#       - "format"
+#       - "f-string"
+#       - "concat"
+#       - "write"
+#       - "str.format"
+#       - "div.innerHTML"
+#       - "script.src"
+#       - "document.write"
+#       - "setAttribute"
+
+#     sanitizers:
+#       # Known methods to escape or sanitize input for safe HTML output
+#       - "html.escape"
+#       - "html.unescape"
+#       - "cgi.escape"
+#       - "cgi.unescape"
+#       - "markupsafe.escape"
+#       - "markupsafe.Markup"
+#       - "bleach.clean"
+#       - "escape"
+#       - "sanitize_html"
+#       - "xml.sax.saxutils.escape"
+#       - "xml.sax.saxutils.unescape"
+#       - "json.dumps"  # Sometimes used to render safe JSON output in HTML
+
+#     examples:
+#       # Examples of unsafe patterns
+#       unsafe:
+#         - "response.write(request.args.get('input'))"
+#         - "return f'<div>{request.form.get('data')}</div>'"
+#         - "print(f'<script>alert({user_input})</script>')"
+
+#       # Examples of safe patterns (using sanitizers)
+#       safe:
+#         - "return html.escape(request.args.get('input'))"
+#         - "return markupsafe.Markup(request.form.get('data'))"
+#         - "cleaned_data = bleach.clean(request.args.get('data'))"
+
+#   - id: SQLI-001
+#     description: "Potential SQL Injection"
+#     severity: "critical"
+#     sources: ["user_input"]
+#     sinks: ["execute"]
+#     sanitizers: ["escape_string", "parameterize"]
+
+rules:
+  # Cross-Site Scripting (XSS) Rules
+  - id: XSS-PY-001
+    description: "Potential Cross-site Scripting (Python)"
+    severity: "high"
+    sources:
+      - "request.args.get"
+      - "request.form.get"
+      - "request.values.get"
+      - "request.json.get"
+      - "request.cookies.get"
+      - "request.headers.get"
+      - "request.args"
+      - "request.form"
+      - "request.values"
+      - "request.json"
+      - "request.cookies"
+      - "request.headers"
+      - "request.get_data"
+      - "os.environ.get"
+      - "flask.request"
+      - "django.http.request"
+      - "user_input"
+      - "external_api_response"
+
+    sinks:
+      - "render_template"
+      - "render_template_string"
+      - "Response"
+      - "HttpResponse"
+      - "redirect"
+      - "print"
+      - "return"
+      - "format"
+      - "f-string"
+      - "str.format"
+      - ".innerHTML"
+      - ".outerHTML"
+      - "document.write"
+      - "window.location"
+      - "eval"
+      - "setTimeout"
+      - "setInterval"
+      - "Function"
+
+    sanitizers:
+      - "html.escape"
+      - "markupsafe.escape"
+      - "bleach.clean"
+      - "django.utils.html.escape"
+      - "flask.Markup.escape"
+      - "json.dumps"
+      - "urllib.parse.quote"
+      - "cgi.escape"
+
+    # examples:
+    #   unsafe:
+    #     - "return f'<div>{request.args.get("input")}</div>'"
+    #     - "HttpResponse(request.GET.get('unsafe'))"
+    #   safe:
+    #     - "return markupsafe.escape(request.form.get('data'))"
+    #     - "HttpResponse(bleach.clean(user_input))"
+
+  - id: XSS-JS-001
+    description: "Potential DOM-based XSS (JavaScript)"
+    severity: "high"
+    sources:
+      - "document.location"
+      - "window.location"
+      - "document.URL"
+      - "document.referrer"
+      - "window.name"
+      - "localStorage"
+      - "sessionStorage"
+      - "XMLHttpRequest.responseText"
+      - "fetch.response"
+      - "URLSearchParams.get"
+      - "event.data"
+      - "postMessage"
+
+    sinks:
+      - "innerHTML"
+      - "outerHTML"
+      - "document.write"
+      - "document.writeln"
+      - "eval"
+      - "setTimeout"
+      - "setInterval"
+      - "Function"
+      - "script.src"
+      - "iframe.src"
+      - "location.href"
+      - "element.setAttribute('on*')"
+      - "element.addEventListener"
+      - "React dangerouslySetInnerHTML"
+
+    sanitizers:
+      - "DOMPurify.sanitize"
+      - "encodeURIComponent"
+      - "encodeURI"
+      - "textContent"
+      - "innerText"
+      - "sanitize-html"
+      - "escape-html"
+      - "element.textContent"
+      - "JSON.stringify"
+      - "Content Security Policy (CSP)"
+
+    # examples:
+    #   unsafe:
+    #     - "document.getElementById('div').innerHTML = userInput;"
+    #     - "eval(window.location.hash.slice(1));"
+    #   safe:
+    #     - "element.textContent = userInput;"
+    #     - "DOMPurify.sanitize(untrustedHTML);"
+
+  # SQL Injection Rules
+  - id: SQLI-PY-001
+    description: "Potential SQL Injection (Python)"
+    severity: "critical"
+    sources:
+      - "request.args"
+      - "request.form"
+      - "request.json"
+      - "user_input"
+      - "external_data_source"
+      - "os.environ.get"
+
+    sinks:
+      - "cursor.execute"
+      - "connection.execute"
+      - "sqlalchemy.text"
+      - "raw"
+      - "extra"
+      - "django.db.connection.cursor"
+      - "mongo_client.find"
+
+    sanitizers:
+      - "sqlalchemy.sql.expression.bindparam"
+      - "psycopg2.sql.SQL"
+      - "%s parameterization"
+      - "named parameters"
+      - "ORM methods"
+      - "pymongo.son_manipulator"
+
+    # examples:
+    #   unsafe:
+    #     - "cursor.execute(f'SELECT * FROM users WHERE name = {user_input}')"
+    #     - "User.query.filter(f'username = {username}')"
+    #   safe:
+    #     - "cursor.execute('SELECT * FROM users WHERE name = %s', (user_input,))"
+    #     - "User.query.filter_by(username=username)"
+
+  - id: SQLI-JS-001
+    description: "Potential SQL Injection (JavaScript)"
+    severity: "critical"
+    sources:
+      - "req.query"
+      - "req.body"
+      - "req.params"
+      - "req.headers"
+      - "document.location"
+      - "localStorage"
+      - "XMLHttpRequest"
+
+    sinks:
+      - "mysql.query"
+      - "pg.query"
+      - "sequelize.query"
+      - "knex.raw"
+      - "execute"
+      - "exec"
+      - "db.all"
+      - "db.run"
+      - "eval"
+      - "Function"
+
+    sanitizers:
+      - "parameterized queries"
+      - "prepared statements"
+      - "sequelize.literal"
+      - "knex.parameter"
+      - "pg.Pool.parameterized"
+      - "escape"
+      - "mysql.escape"
+      - "pg-escape"
+
+    # examples:
+    #   unsafe:
+    #     - "db.query(`SELECT * FROM users WHERE name = ${userInput}`)"
+    #     - "knex.raw(`UPDATE table SET col = '${value}'`))"
+    #   safe:
+    #     - "db.query('SELECT * FROM users WHERE name = ?', [userInput])"
+    #     - "sequelize.findAll({ where: { name: userInput } })"
+
+  # Additional Context-Aware Rules
+  - id: XSS-CONTEXT-001
+    description: "Context-Sensitive XSS Vectors"
+    severity: "medium"
+    sources: 
+      - "user_controlled_input"
+      - "third_party_widgets"
+      - "markdown_input"
+      - "rich_text_editors"
+    sinks:
+      - "href attributes"
+      - "style attributes"
+      - "javascript: protocol"
+      - "data: protocol"
+      - "template literals"
+      - "dynamic import()"
+    sanitizers:
+      - "URL validation"
+      - "CSS sanitization"
+      - "SafeURL policies"
+      - "Content-Disposition headers"
+      - "sandboxed iframes"
+
+  - id: SQLI-CONTEXT-001
+    description: "NoSQL Injection Vectors"
+    severity: "high"
+    sources: 
+      - "req.body"
+      - "JSON input"
+      - "GraphQL variables"
+    sinks:
+      - "MongoDB queries"
+      - "Redis commands"
+      - "Elasticsearch DSL"
+      - "ORM where clauses"
+    sanitizers:
+      - "MongoDB ObjectId validation"
+      - "Type casting"
+      - "Query whitelisting"
+      - "Schema validation"
