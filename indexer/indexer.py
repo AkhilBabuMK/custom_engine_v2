@@ -119,7 +119,15 @@ class ASTIndexer:
         elif node.type == 'return_statement':
             print(f"DEBUG: Analyzing return statement")
             self._analyze_return_statement(node, code)
-        
+
+        elif node.type == 'subscript':
+            base = node.child_by_field_name('value')
+            if base and base.text.decode() in ['request.form', 'request.args']:
+                if var_name := self._get_assigned_variable(node.parent):
+                    self._mark_tainted(var_name, node, code)
+                    print(f"DEBUG: Marked {var_name} as tainted via subscript")
+            
+
         # Traverse child nodes
         for child in node.children:
             self._analyze_ast(child, code, file_path)
@@ -241,14 +249,18 @@ class ASTIndexer:
             self._report_vulnerability(node, code, vulnerability_type='xss')
 
     def _contains_tainted_data(self, node) -> bool:
-        """Check if an AST node contains any tainted variables"""
+        """Check if an AST node contains any tainted variables (including inside f-strings)"""
         if node.type == 'identifier':
-            var_name = node.text.decode()
-            return var_name in self.tainted_vars
+            return node.text.decode() in self.tainted_vars
+        elif node.type == 'string' and 'f' in node.text.decode():  # F-string check
+            for child in node.children:
+                if child.type == 'interpolation':
+                    expr = child.child_by_field_name('expression')
+                    if self._contains_tainted_data(expr):
+                        return True
         elif hasattr(node, 'children'):
             return any(self._contains_tainted_data(child) for child in node.children)
         return False
-
     def _get_call_arguments(self, node):
         """Extract arguments from a call expression"""
         args = []
