@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login Page</title>
+</head>
+<body>
+    <h1>Login</h1>
+    <form id="login-form">
+        <input type="text" id="username" placeholder="Username">
+        <input type="password" id="password" placeholder="Password">
+        <button type="submit">Login</button>
+    </form>
+
+    <script>
+        document.getElementById('login-form').addEventListener('submit', function(event) {
+            event.preventDefault();
+
+            var username = document.getElementById('username').value;
+            var password = document.getElementById('password').value;
+
+            // Simulating how unsafe user input might be sent to the server (no sanitization!)
+            var queryString = "SELECT * FROM users WHERE username = '" + username + "' AND password = '" + password + "'";
+
+            // Log the generated query (for testing purposes)
+            console.log("Generated SQL Query: " + queryString);
+
+            // Simulating the request being sent to a backend server that is vulnerable to SQL injection
+            // Normally here you'd make an AJAX request to the server, but this is just a simulation
+            // Example: fetch('/login', { method: 'POST', body: queryString });
+
+            // Test SQL injection payload (e.g., entering `admin' OR 1=1 --` as username or password)
+            // If the backend uses unsanitized input, this query would be executed by the DB.
+            // Here, for testing, simulate that the query could be vulnerable to injection.
+            if (username === "admin' OR 1=1 --") {
+                alert("SQL Injection successful! Unauthorized access.");
+            } else {
+                alert("Login attempt with valid credentials.");
+            }
+        });
+    </script>
+</body>
+</html>

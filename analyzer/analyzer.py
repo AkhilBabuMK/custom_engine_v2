@@ -1,41 +1,4 @@
 
-# class TaintAnalyzer:
-#     def __init__(self, tainted_vars: Dict, data_flows: List[Dict]):
-#         self.tainted_vars = tainted_vars
-#         self.data_flows = data_flows
-
-#     def analyze(self, rules: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-#         """Match data flows against security rules"""
-#         findings = []
-
-#         if findigs in ["request.args.get", "request.form.get"]:
-
-        
-#         for flow in self.data_flows:
-#             # Check if any rule matches this data flow
-#             for rule in rules:
-#                 if self._matches_rule(flow, rule):
-#                     findings.append(flow)
-#                     break  
-#         return findings
-
-#     def _matches_rule(self, flow: Dict, rule: Dict) -> bool:
-#         """Check if a data flow matches a security rule"""
-#         # Check source match
-#         source_match = any(
-#             any(source in var_source for source in rule['sources'])
-#             for var in flow.get('tainted_vars', [])
-#             for var_source in self.tainted_vars.get(var, {}).get('sources', [])
-#         )
-        
-#         # Check sink match
-#         sink_match = any(sink in flow.get('sink', '') for sink in rule['sinks'])
-        
-#         # Check sanitization
-#         sanitized = len(flow.get('sanitizers', [])) > 0
-        
-#         return source_match and sink_match and not sanitized
-
 import re
 import logging
 from typing import Dict, List, Any

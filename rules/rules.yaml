@@ -157,7 +157,8 @@ rules:
       - "URLSearchParams.get"
       - "event.data"
       - "postMessage"
-
+      - "fetch"
+      - "response.json"
     sinks:
       - "innerHTML"
       - "outerHTML"
@@ -185,6 +186,7 @@ rules:
       - "element.textContent"
       - "JSON.stringify"
       - "Content Security Policy (CSP)"
+      - "textContent"
 
     # examples:
     #   unsafe:
@@ -313,3 +315,47 @@ rules:
       - "Type casting"
       - "Query whitelisting"
       - "Schema validation"
+
+  #html based xss rules
+  - id: XSS-HTML-001
+    description: "XSS via unsafe HTML attributes"
+    severity: "high"
+    sources:
+      - "user_input"
+      - "request.args"
+      - "request.form"
+      - "request.json"
+    sinks:
+      - "innerHTML"
+      - "outerHTML"
+      - "on*"
+      - "onload"
+      - "onerror"
+      - "onclick"
+    sanitizers:
+      - "html.escape"
+      - "markupsafe.escape"
+      - "escape"
+      - "sanitize"
+      - "mark_safe"
+
+
+# In rules.yaml for XSS-JS-002
+  - id: XSS-JS-002
+    description: "XSS via template literals in JS"
+    severity: "high"
+    sources:
+      - "window.location.search"
+      - "window.location.hash"
+      - "URLSearchParams"
+      - "fetch"
+      - "response.json"
+    sinks:
+      - "innerHTML"
+      - "outerHTML"
+      - "template_literal"
+      - "document.write"
+    sanitizers:
+      - "DOMPurify.sanitize"
+      - "textContent"
+      - "encodeURIComponent"
