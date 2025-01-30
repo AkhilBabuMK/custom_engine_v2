@@ -4,13 +4,26 @@ from tree_sitter import Parser, Language
 from typing import Dict, List, Any
 from tree_sitter import Parser, Language
 from typing import Dict, List, Any, Set
+import re
+
+import logging
+logger = logging.getLogger(__name__)
+
 
 class ASTIndexer:
+
     def __init__(self):
-        self.tainted_vars = {}
-        self.data_flows = []
-        self._init_parser()
-        self.current_file = ""
+            self.tainted_vars = {}
+            self.data_flows = []
+            self._init_parser()
+            self.current_file = ""
+            self.all_sources = []
+            self.all_sinks = []
+            self.all_sanitizers = []
+            self.sql_sinks = [
+                'execute', 'executemany', 'cursor.execute',
+                'sqlalchemy.text', 'raw', 'django.db.connection.cursor'
+            ]
 
     def _init_parser(self):
         try:
@@ -21,6 +34,7 @@ class ASTIndexer:
         except Exception as e:
             raise RuntimeError(f"Parser init failed: {str(e)}")
 
+
     def index_project(self, path: str):
         for root, _, files in os.walk(path):
             for file in files:
@@ -28,11 +42,13 @@ class ASTIndexer:
                     self.current_file = os.path.join(root, file)
                     self._index_file(self.current_file)
 
+
     def _index_file(self, file_path: str):
         with open(file_path, "r") as f:
             code = f.read()
             tree = self.parser.parse(bytes(code, "utf8"))
             self._analyze_ast(tree.root_node, code, file_path)
+
     def _check_tainted_usage(self, node, code: str):
         """Check if a tainted variable is used in a vulnerable sink context"""
         current_node = node
@@ -57,78 +73,50 @@ class ASTIndexer:
                 self._track_xss_sink(current_node, code)
                 break
 
-    # def _analyze_ast(self, node, code: str, file_path: str):
-    #     print("printing the node type inside the function _analyse_ast:", node.type)
-    #     # Track user input sources
-    #     if node.type == 'call_expression':
-            
-    #         func_name = self._get_function_name(node)
-    #         print(func_name)
-    #         if func_name in ['request.args.get', 'request.form.get']:
-    #             if var_name := self._get_assigned_variable(node.parent):
-    #                 self._mark_tainted(var_name, node, code)
-    #                 print(f"Marked tainted: {var_name}")  # Debug
-
-    #     # Track SQL sinks
-    #     if node.type == 'call_expression':
-    #         func_name = self._get_function_name(node)
-    #         print(func_name)
-    #         if func_name in ['execute', 'executemany', 'cursor.execute']:
-    #             print(f"Found SQL sink: {func_name}")  # Debug
-    #             self._track_sql_sink(node, code)
-
-    #     # Track XSS sinks
-    #     if self._is_xss_sink(node, code):
-    #         print(f"Found XSS sink")  # Debug
-    #         self._track_xss_sink(node, code)
-
-    #     # Track sanitizers
-    #     if node.type == 'call_expression':
-    #         func_name = self._get_function_name(node)
-    #         if func_name in ['escape_string', 'html.escape', 'markupsafe.escape']:
-    #             self._track_sanitizer(node, code)
-
-    #     for child in node.children:
-    #         self._analyze_ast(child, code, file_path)
     def _analyze_ast(self, node, code: str, file_path: str):
-    # Debug logging for function calls
+        # Enhanced source detection
         if node.type == 'call':
             full_name = self._get_function_name(node)
-            print(f"DEBUG: Found function call: {full_name}")
             
-            # Check for source patterns (e.g., request.args.get)
-            if any(source in full_name for source in ['request.args', 'request.form', 'request.values']):
-                print(f"DEBUG: Found source pattern: {full_name}")
+            # Check against all rule-defined sources
+            if any(src in full_name for src in self.all_sources):
                 if var_name := self._get_assigned_variable(node.parent):
                     self._mark_tainted(var_name, node, code)
-                    print(f"DEBUG: Marked variable as tainted: {var_name}")
-            
-            # Check for sink patterns
-            if any(sink in full_name for sink in ['execute', 'html', 'render_template']):
-                print(f"DEBUG: Found sink pattern: {full_name}")
-                self._check_sink_usage(node, code)
-        
-        # Check for variable usage
-        elif node.type == 'identifier':
-            var_name = node.text.decode()
-            if var_name in self.tainted_vars:
-                print(f"DEBUG: Found usage of tainted variable: {var_name}")
-                self._check_tainted_usage(node, code)
-        
-        # Add specific checks for return statements that might contain tainted data
-        elif node.type == 'return_statement':
-            print(f"DEBUG: Analyzing return statement")
-            self._analyze_return_statement(node, code)
+                    logger.debug(f"Marked {var_name} as tainted via source {full_name}")
 
+            # Check against all rule-defined sinks
+            if any(sink in full_name for sink in self.all_sinks):
+                self._check_sink_usage(node, code)
+
+            # Check for sanitizers
+            if full_name in self.all_sanitizers:
+                if var_name := self._get_assigned_variable(node.parent):
+                    self.tainted_vars[var_name]['sanitized'] = True
+                    logger.debug(f"Marked {var_name} as sanitized by {full_name}")
+
+        # Enhanced XSS detection
+        elif node.type == 'return_statement':
+            self._track_xss_sink(node, code)
+
+        # SQL pattern detection
+        elif node.type == 'string':
+            if self._detect_sqli_patterns(node.text.decode()):
+                self._report_vulnerability(node, code, 'sql')
+
+        # Dangerous string concatenation
+        elif node.type == 'binary_operator' and node.text.decode() == '+':
+            if self._contains_tainted_data(node):
+                logger.debug(f"Tainted data in concatenation at line {node.start_point[0]+1}")
+
+        # Dictionary-style source access
         elif node.type == 'subscript':
             base = node.child_by_field_name('value')
-            if base and base.text.decode() in ['request.form', 'request.args']:
+            if base and base.text.decode() in self.all_sources:
                 if var_name := self._get_assigned_variable(node.parent):
                     self._mark_tainted(var_name, node, code)
-                    print(f"DEBUG: Marked {var_name} as tainted via subscript")
-            
+                    logger.debug(f"Marked {var_name} as tainted via subscript")
 
-        # Traverse child nodes
+        # Recursive analysis
         for child in node.children:
             self._analyze_ast(child, code, file_path)
 
@@ -146,63 +134,70 @@ class ASTIndexer:
         return False
 
     def _track_sql_sink(self, node, code: str):
-        args_node = node.child_by_field_name('arguments')
-        if args_node and args_node.named_children:
-            query_node = args_node.named_children[0]
-            query_text = query_node.text.decode()
-            tainted_vars = [var for var in self.tainted_vars if var in query_text]
-            if tainted_vars:
-                print(f"Found SQL injection vector: {tainted_vars}")  # Debug
-                self.data_flows.append({
-                    'type': 'sql',
-                    'sink': 'execute',
-                    'file': self.current_file,
-                    'line': node.start_point[0] + 1,
-                    'code': code.split('\n')[node.start_point[0]],
-                    'tainted_vars': tainted_vars
-                })
+        """Enhanced SQLi detection with pattern matching"""
+        func_name = self._get_function_name(node)
+        if any(sql_sink in func_name for sql_sink in self.sql_sinks):
+            args = self._get_call_arguments(node)
+            for arg in args:
+                if self._contains_tainted_data(arg):
+                    query = arg.text.decode()
+                    if self._detect_sqli_patterns(query):
+                        self.data_flows.append({
+                            'type': 'sql',
+                            'sink': func_name,
+                            'file': self.current_file,
+                            'line': node.start_point[0] + 1,
+                            'code': code.split('\n')[node.start_point[0]],
+                            'tainted_vars': [var for var in self.tainted_vars if var in query],
+                            'description': 'Potential SQL injection detected'
+                        })
 
-    # def _track_xss_sink(self, node, code: str):
-    #     if node.type == 'return_statement':
-    #         expr = node.child_by_field_name('expression')
-    #         content = expr.text.decode()
-    #         tainted_vars = [var for var in self.tainted_vars if var in content]
-    #         if tainted_vars:
-    #             print(f"Found XSS vector: {tainted_vars}")  # Debug
-    #             self.data_flows.append({
-    #                 'type': 'xss',
-    #                 'sink': 'html_output',
-    #                 'file': self.current_file,
-    #                 'line': node.start_point[0] + 1,
-    #                 'code': code.split('\n')[node.start_point[0]],
-    #                 'tainted_vars': tainted_vars
-    #             })
+    def _detect_sqli_patterns(self, query: str) -> bool:
+        """Heuristic SQLi detection"""
+        patterns = [
+            r"\b(union|select|insert|update|delete|drop|alter)\b",
+            r"--", r";\s*$", r"\d+\s*=\s*\d+"
+        ]
+        return any(re.search(p, query, re.IGNORECASE) for p in patterns)
+
     def _track_xss_sink(self, node, code: str):
-        """Handle XSS sinks with null checks"""
+        """Context-aware XSS detection"""
         try:
-            if node.type == 'return_statement':
+            content = None
+            if node.type == 'call':
+                func_name = self._get_function_name(node)
+                args = self._get_call_arguments(node)
+                content = ' '.join([arg.text.decode() for arg in args])
+            elif node.type == 'return_statement':
                 expr = node.child_by_field_name('expression')
-                # Add null check for expression
-                if expr is None:
-                    print("DEBUG: Return statement has no expression")
-                    return
-                    
-                content = expr.text.decode()  # Now safe
+                content = expr.text.decode() if expr else ''
+
+            if content and self._detect_xss_context(content):
                 tainted_vars = [var for var in self.tainted_vars if var in content]
-                
                 if tainted_vars:
-                    print(f"Found XSS vector: {tainted_vars}")
                     self.data_flows.append({
                         'type': 'xss',
-                        'sink': 'html_output',
+                        'sink': self._get_function_name(node),
                         'file': self.current_file,
                         'line': node.start_point[0] + 1,
                         'code': code.split('\n')[node.start_point[0]],
-                        'tainted_vars': tainted_vars
+                        'tainted_vars': tainted_vars,
+                        'description': 'Potential XSS detected in dangerous context'
                     })
-                    
-        except AttributeError as e:
-            print(f"WARNING: Failed to process XSS sink: {str(e)}")
+
+        except Exception as e:
+            logger.error(f"XSS tracking error: {str(e)}")
+
+    def _detect_xss_context(self, code: str) -> bool:
+        """Identify dangerous HTML patterns"""
+        patterns = [
+            r"<script[^>]*>.*\{.*\}",
+            r"on\w+=",
+            r"javascript:",
+            r"url\([^)]*\{.*\}",
+            r"<\w+[^>]*\{.*\}[^>]*>"
+        ]
+        return any(re.search(p, code) for p in patterns)
 
     def _analyze_return_statement(self, node, code: str):
         """Analyze return statements with null safety"""
@@ -219,18 +214,6 @@ class ASTIndexer:
             sanitizer = self._get_function_name(node)
             self.tainted_vars[var_name]['sanitizers'].add(sanitizer)
             print(f"Applied sanitizer {sanitizer} to {var_name}")  # Debug
-
-    
-    # def _get_function_name(self, node):
-    #     """Get simple function name from call expression"""
-    #     if node.type == 'call_expression':
-    #         func_node = node.child_by_field_name('function')
-    #         if func_node.type == 'identifier':
-    #             return func_node.text.decode()
-    #         if func_node.type == 'attribute':
-    #             return func_node.child_by_field_name('attribute').text.decode()
-    #     return ''
-  #----------------   
    
 
     def _check_sink_usage(self, node, code: str):
@@ -251,16 +234,19 @@ class ASTIndexer:
     def _contains_tainted_data(self, node) -> bool:
         """Check if an AST node contains any tainted variables (including inside f-strings)"""
         if node.type == 'identifier':
-            return node.text.decode() in self.tainted_vars
-        elif node.type == 'string' and 'f' in node.text.decode():  # F-string check
+            var_name = node.text.decode()
+            return var_name in self.tainted_vars and not self.tainted_vars[var_name].get('sanitized', False)
+        
+        if node.type == 'string' and 'f' in node.text.decode():
             for child in node.children:
-                if child.type == 'interpolation':
-                    expr = child.child_by_field_name('expression')
-                    if self._contains_tainted_data(expr):
-                        return True
-        elif hasattr(node, 'children'):
+                if child.type == 'interpolation' and self._contains_tainted_data(child):
+                    return True
+        
+        if hasattr(node, 'children'):
             return any(self._contains_tainted_data(child) for child in node.children)
+        
         return False
+
     def _get_call_arguments(self, node):
         """Extract arguments from a call expression"""
         args = []
@@ -272,77 +258,43 @@ class ASTIndexer:
         return args
 
     def _report_vulnerability(self, node, code: str, vulnerability_type='generic'):
+        """Enhanced vulnerability reporting"""
         desc_map = {
-        'sql': 'Untrusted input in SQL execution',
-        'xss': 'Unsanitized user input in HTML output'
+            'sql': 'Untrusted input in SQL execution',
+            'xss': 'Unsanitized user input in HTML output'
         }
         
-        """Report a detected vulnerability"""
         self.data_flows.append({
             'type': vulnerability_type,
             'file': self.current_file,
             'line': node.start_point[0] + 1,
             'code': code.split('\n')[node.start_point[0]],
-            'description': f"Potential {vulnerability_type} vulnerability detected",
+            'description': desc_map.get(vulnerability_type, 'Potential vulnerability detected'),
             'sink': self._get_function_name(node),
-            'tainted_vars': list(self.tainted_vars.keys())
+            'tainted_vars': [var for var in self.tainted_vars if not self.tainted_vars[var].get('sanitized', False)]
         })
-        print(f"DEBUG: Reported {vulnerability_type} vulnerability at line {node.start_point[0] + 1}")
+        logger.debug(f"Reported {vulnerability_type} vulnerability at line {node.start_point[0] + 1}")
+
 #-----------------
- 
     def _get_function_name(self, node):
-        """Get full function name including chain of attributes"""
-        print(f"DEBUG: Analyzing node type: {node.type}")
+        """Resolve complex call chains like 'db.connection.cursor().execute'"""
+        parts = []
+        current = node
         
-        if node.type == 'call':
-            func_node = node.child_by_field_name('function')
-            print(f"DEBUG: Function node type: {func_node.type if func_node else 'None'}")
-            
-            if not func_node:
-                return ''
-                
-            # Handle different types of function calls
-            if func_node.type == 'identifier':
-                name = func_node.text.decode()
-                print(f"DEBUG: Found simple function name: {name}")
-                return name
-                
-            elif func_node.type == 'attribute':
-                parts = []
-                current = func_node
-                
-                while current:
-                    print(f"DEBUG: Processing node type: {current.type}")
-                    
-                    if current.type == 'attribute':
-                        attr_node = current.child_by_field_name('attribute')
-                        obj_node = current.child_by_field_name('object')
-                        
-                        if attr_node:
-                            attr_name = attr_node.text.decode()
-                            print(f"DEBUG: Found attribute: {attr_name}")
-                            parts.insert(0, attr_name)
-                        
-                        current = obj_node
-                        
-                    elif current.type == 'identifier':
-                        name = current.text.decode()
-                        print(f"DEBUG: Found identifier: {name}")
-                        parts.insert(0, name)
-                        break
-                        
-                    else:
-                        print(f"DEBUG: Unhandled node type: {current.type}")
-                        break
-                
-                full_name = '.'.join(parts)
-                print(f"DEBUG: Constructed full name: {full_name}")
-                return full_name
-                
+        while current and current.type in ('attribute', 'call', 'identifier'):
+            if current.type == 'attribute':
+                attr_node = current.child_by_field_name('attribute')
+                if attr_node:
+                    parts.insert(0, attr_node.text.decode())
+                current = current.child_by_field_name('object')
+            elif current.type == 'identifier':
+                parts.insert(0, current.text.decode())
+                break
             else:
-                print(f"DEBUG: Unhandled function node type: {func_node.type}")
-                
-        return ''
+                current = current.child_by_field_name('function') if current.type == 'call' else None
+        
+        return '.'.join(parts)
+        
     def _mark_tainted(self, var_name: str, node, code: str):
         print(f"Marking {var_name} as tainted at line {node.start_point[0] + 1}")
         if var_name not in self.tainted_vars:
@@ -365,37 +317,28 @@ class ASTIndexer:
                 return left_node.text.decode()
         return None
 
-    # def load_rules(self, rules_path: str) -> List[Dict[str, Any]]:
-    #     with open(rules_path, "r") as f:
-    #         return yaml.safe_load(f).get("rules", [])
-
-    #     # rules = yaml.safe_load(open(rules_path))
-    #     # print(f"Loaded rules: {rules}")  # Debug output
-    #     # return rules
 
     def load_rules(self, rules_path: str) -> List[Dict[str, Any]]:
-        """Load and validate security rules from YAML file"""
+        """Enhanced rule loading with metadata extraction"""
         try:
             with open(rules_path, "r") as f:
                 rules_data = yaml.safe_load(f)
-                print(f"DEBUG: Loaded rules data: {rules_data}")  # Debug output
-                
                 if not rules_data or 'rules' not in rules_data:
-                    print("WARNING: No rules found in rules file")
                     return []
-                
-                # Validate and process rules
+
                 processed_rules = []
                 for rule in rules_data['rules']:
                     if self._validate_rule(rule):
                         processed_rules.append(rule)
-                        print(f"DEBUG: Processed valid rule: {rule['id']}")
-                    else:
-                        print(f"WARNING: Invalid rule found: {rule.get('id', 'unknown')}")
                 
+                # Populate detection lists
+                self.all_sources = list({src for r in processed_rules for src in r['sources']})
+                self.all_sinks = list({sink for r in processed_rules for sink in r['sinks']})
+                self.all_sanitizers = list({san for r in processed_rules for san in r['sanitizers']})
+
                 return processed_rules
         except Exception as e:
-            print(f"ERROR: Failed to load rules: {str(e)}")
+            logger.error(f"Rule loading failed: {str(e)}")
             return []
 
     def _validate_rule(self, rule: Dict[str, Any]) -> bool:
@@ -474,3 +417,4 @@ class ASTIndexer:
         })
         
         return steps
+

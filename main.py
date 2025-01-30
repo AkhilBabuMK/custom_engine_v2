@@ -40,7 +40,9 @@ def main():
         # Generate SARIF report
         logger.info("Generating SARIF report...")
         reporter = SARIFReporter()
-        report = reporter.generate_report(findings, args.path)
+        # report = reporter.generate_report(findings, args.path)
+        # In main() function after analysis:
+        report = reporter.generate_report(findings, args.path, rules)
 
         print(report)
         # # analyzer = TaintAnalyzer(indexer.symbol_table, indexer.data_flows)
